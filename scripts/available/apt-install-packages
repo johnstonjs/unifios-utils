@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# Ensure persistent installation of specified packages for UniFi OS >2.0 devices
+
+# User Modifiable Variables (DATA_DIR should be within /data/___ to persist)
+DEBUG=1				                  # If TRUE, debug messages to STDOUT
+UTIL_DIR='/data/unifios-utils'
+DATA_DIR="$UTIL_DIR/config"	          # Set persistent folder location
+
+APT_INSTALLS="$DATA_DIR/apt-install-packages/apt-install-packages.conf"
+
+cat $APT_INSTALLS | sudo xargs apt -y install

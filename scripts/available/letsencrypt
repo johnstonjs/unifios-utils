@@ -1,0 +1,139 @@
+#!/bin/sh
+
+# Acquire LetsEncrypt certificates for UniFi OS >2.0 devices
+# Drawn from the excellent https://github.com/alxwolf/ubios-cert
+# Uses acme.sh: https://github.com/acmesh-official/acme.sh
+
+# User Modifiable Variables (DATA_DIR should be within /data/___ to persist)
+# Only change DATA_DIR and CONF_DIR if you've installed to other than /data/
+DEBUG=1				                  # If TRUE, debug messages to STDOUT
+ACME_CMD_PARAMS=""              # Set additional acme.sh parameters
+UTIL_DIR='/data/unifios-utils'
+DATA_DIR="$UTIL_DIR/.config"	  # Set persistent data location
+CONF_DIR="$UTIL_DIR/config"     # Set persistent config location
+
+
+# Non-User Modifiable Variables (strongly recommend not modifying)
+. "$CONF_DIR/letsencrypt/letsencrypt.conf"
+LETS_DIR="$DATA_DIR/letsencrypt"
+ACME_DIR="$LETS_DIR/acme.sh"
+CERT_DIR="$LETS_DIR/certs"
+ACME_CONF="$ACME_DIR/conf"
+LETS_SERVICE="$LETS_DIR/acme_letsencrypt.service"
+LETS_TIMER="$LETS_DIR/acme_letsencrypt.timer"
+SYSD_SERVICE='/etc/systemd/system/acme_letsencrypt.service'
+SYSD_TIMER='/etc/systemd/system/acme_letsencrypt.timer'
+ACME_CMD="$ACME_DIR/acme.sh $ACMD_CMD_PARAMS --home $ACME_DIR \
+	  --config-home $ACME_CONF --cert-home $CERT_DIR \
+	  --keylength 2048"
+
+# Check is acme.sh is installed
+if [ $DEBUG -eq 1 ]; then
+  echo "Testing that acme.sh is installed to $DATA_DIR"
+fi
+if [ -f $ACME_DIR/acme.sh ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "Success!  The file $ACME_DIR/acme.sh exists."
+  fi
+else
+  if [ $DEBUG -eq 1 ]; then
+    echo "The file $ACME_DIR/acme.sh does not exist, installing acme.sh..."
+  fi
+  git clone https://github.com/acmesh-official/acme.sh.git /tmp/acme.sh
+  wait $!
+  mkdir -p $ACME_DIR $ACME_CONF $CERT_DIR
+  (cd /tmp/acme.sh && ./acme.sh --install --home $ACME_DIR --config-home $ACME_CONF \
+  --cert-home $CERT_DIR --accountemail $CA_REGISTRATION_EMAIL --no-cron )
+  wait $!
+  $ACME_CMD --set-default-ca --server $DEFAULT_CA
+fi
+# Either way, acme.sh now exists in $DATA_DIR/letsencrypt/acme.sh
+
+# Check if certfificates exist, issue if needed
+if [ -e "$CERT_DIR/$CERT_HOST/fullchain.cer" ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "Certificate exists in $CERT_DIR/$CERT_HOST"
+  fi
+else
+  if [ $DEBUG -eq 1 ]; then
+    echo "No certificate found in in $CERT_DIR, issueing new cert"
+  fi
+  $ACME_CMD --issue --dns $DNS_API_PROVIDER -d $CERT_HOST \
+  --renew-hook 'systemctl restart unifi-core.service'
+  wait $!
+fi
+
+# Check if certificates are properly deployed
+if cmp -s "$CERT_DIR/$CERT_HOST/fullchain.cer" \
+   /data/unifi-core/config/unifi-core.crt; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "The certificates appear to be deployed"
+  fi
+else
+  $ACME_CMD --deploy -d $CERT_HOST --deploy-hook unifi
+  wait $!
+fi
+
+# Check if the systemd unit exists
+if [ -e "$LETS_SERVICE" ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "systemd unit exists at $LETS_SERVICE"
+  fi
+else
+# Install systemd service
+cat <<EOF >> "$LETS_SERVICE"
+[Unit]
+Description=Renew Let's Encrypt certificates using acme.sh
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$ACME_CMD --cron
+
+SuccessExitStatus=0 2
+EOF
+fi
+
+# Check if systemd has a symlink to the service
+if [ -e $SYSD_SERVICE ] && [ -h $SYSD_SERVICE ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "systemd unit symlink exists at $SYSD_SERVICE"
+  fi
+else
+  ln -s $LETS_SERVICE $SYSD_SERVICE
+  systemctl daemon-reload
+  wait $!
+  systemctl start acme_letsencrypt.service
+fi
+
+# Check if the systemd timer exists
+if [ -e "$LETS_TIMER" ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "systemd timer exists at $LETS_TIMER"
+  fi
+else
+# Install systemd timer
+cat <<EOF >> "$LETS_TIMER"
+[Unit]
+Description=Daily renewal of Let's Encrypt certificates
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+fi
+# Check if systemd has a symlink to the timer
+if [ -e $SYSD_TIMER ] && [ -h $SYSD_TIMER ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "systemd timer symlink exists at $SYSD_TIMER"
+  fi
+else
+  ln -s $LETS_TIMER $SYSD_TIMER
+  systemctl start acme_letsencrypt.timer
+  wait $!
+  systemctl enable acme_letsencrypt.timer
+fi
