@@ -60,6 +60,7 @@ The supported utilities are
 - ZeroTier
 - LetsEncrypt Certificates
 - APT Package Installation
+- Static IP Addresses for Ubiquiti Devices
 
 ## Supported Devices
 
