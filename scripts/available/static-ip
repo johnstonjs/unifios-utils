@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Confgure dnsmasq to provide static IPs for specified DHCP clients
+# This is particularly useful for UniFi devices on a network and
+# allows them to be allocated static IPs, while still using DHCP.
+
+# User Modifiable Variables (UTIL_DIR should be within /data/___ to persist)
+# Only change CONF_DIR if you've installed to other than /data/
+DEBUG=1				# If TRUE, debug messages to STDOUT
+UTIL_DIR='/data/unifios-utils'
+CONF_DIR="$UTIL_DIR/config"     # Set persistent config location
+
+# Non-User Modifiable Variables (strongly recommend not modifying)
+DNSMASQ_CONF_DIR="/etc/dnsmasq.d"
+DNSMASQ_CONF_FILE="$DNSMASQ_CONF_DIR/static-ip.conf"
+STATIC_IP_CONF="$CONF_DIR/static-ip/static-ip.conf"
+
+# Check if dnsmasq config file symlink exists at correct location
+if [ -e $DNSMASQ_CONF_FILE ] && [ -h $DNSMASQ_CONF_FILE ]; then
+  if [ $DEBUG -eq 1 ]; then
+    echo "dnsmasq symlink exists at $DNSMASQ_CONF_FILE"
+  fi
+else
+  ln -s $STATIC_IP_CONF $DNSMASQ_CONF_FILE
+  pkill dnsmasq
+  if [ $DEBUG -eq 1 ]; then
+    echo "dnsmasq symlink installed at $DNSMASQ_CONF_FILE"
+  fi
+fi
