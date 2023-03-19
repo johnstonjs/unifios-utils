@@ -9,54 +9,149 @@ DATA_DIR="$UTIL_DIR/.config"         	# Set persistent folder location
 
 # Non-User Modifiable Variables (strongly recommend not modifying)
 ZT_DIR=/var/lib/zerotier-one	        # Location for ZeroTier config
+ZT_SERVICE="$ZT_DIR/zt_upgrade.service"
+ZT_TIMER="$ZT_DIR/zt_upgrade.timer"
+SYSD_SERVICE='/etc/systemd/system/zt_upgrade.service'
+SYSD_TIMER='/etc/systemd/system/zt_upgrade.timer'
 
-# Check is ZeroTier has previously been installed
-if [ -d $DATA_DIR/zerotier-one ]; then
-  if [ $DEBUG -eq 1 ]; then
-    echo "$DATA_DIR/zerotier-one exists, assuming it has valid ZT files"
-  fi
-else
-  if [ $DEBUG -eq 1 ]; then
-    echo "$DATA_DIR/zerotier-one does not exist, so this is initial install"
-    echo "Installing ZeroTier from https://install.zerotier.com"
-  fi
-  curl -s https://install.zerotier.com | sudo bash
-  while [ ! -f /var/lib/zerotier-one/identity.secret ]; do
+# Command line arguments:
+#   None ($# == 0): Execute the installation routine
+#   upgrade ($1 == upgrade): Execute the upgrade routine
+
+# Check if there are any command line arguments
+if [ $# -eq 0 ]; then
+  # Check is ZeroTier has previously been installed
+  if [ -d $DATA_DIR/zerotier-one ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "$DATA_DIR/zerotier-one exists, assuming it has valid ZT files"
+    fi
+  else
+    if [ $DEBUG -eq 1 ]; then
+      echo "$DATA_DIR/zerotier-one does not exist, so this is initial install"
+      echo "Installing ZeroTier from https://install.zerotier.com"
+    fi
+    curl -s https://install.zerotier.com | sudo bash
+    while [ ! -f /var/lib/zerotier-one/identity.secret ]; do
         sleep 1
-  done
-  systemctl stop zerotier-one
-  mv $ZT_DIR "$DATA_DIR/"
-  ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
-  systemctl start zerotier-one
-  if [ $DEBUG -eq 1 ]; then
-    echo 'This is an initial install of ZeroTier, once complete'
-    echo 'a network can be joined by executing the command:'
-    echo 'zerotier-cli join <NETWORK_ID>'
-    echo 'see doc/zerotier-one.md for more details'
+    done
+    systemctl stop zerotier-one
+    mv $ZT_DIR "$DATA_DIR/"
+    ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
+    systemctl start zerotier-one
+    if [ $DEBUG -eq 1 ]; then
+      echo 'This is an initial install of ZeroTier, once complete'
+      echo 'a network can be joined by executing the command:'
+      echo 'zerotier-cli join <NETWORK_ID>'
+      echo 'see doc/zerotier-one.md for more details'
+    fi
   fi
+
+  # Check if the ZT package is installed, if not then install it
+  if [ $(dpkg-query -W -f='${Status}' zerotier-one 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "zerotier-one is not installed"
+    fi
+    rm -rf $ZT_DIR
+    apt install zerotier-one
+    wait $!
+    if [ $DEBUG -eq 1 ]; then
+      echo "ZeroTier package has been installed, ensuring persistence..."
+    fi
+    systemctl stop zerotier-one
+    rm -rf $ZT_DIR
+    ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
+    systemctl start zerotier-one
+    if [ $DEBUG -eq 1 ]; then
+      echo "ZeroTier has been installed and is persistent"
+    fi
+  else
+    if [ $DEBUG -eq 1 ]; then
+      echo "zerotier-one is already installed"
+    fi
+  fi
+
+  # Check if systemd service and timer for upgrading exists
+  # Check if the systemd unit exists
+  if [ -e "$ZT_SERVICE" ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "systemd unit exists at $ZT_SERVICE"
+    fi
+  else
+  # Install systemd service
+  cat <<EOF >> "$ZT_SERVICE"
+[Unit]
+Description=Upgrade zerotier-one Package via APT
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$UTIL_DIR/scripts/enabled/zerotier-one upgrade
+
+SuccessExitStatus=0 2
+EOF
+  fi
+  
+  # Check if systemd has a symlink to the service
+  if [ -e $SYSD_SERVICE ] && [ -h $SYSD_SERVICE ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "systemd unit symlink exists at $SYSD_SERVICE"
+    fi
+  else
+    ln -s $ZT_SERVICE $SYSD_SERVICE
+    wait $!
+    systemctl daemon-reload
+    wait $!
+  fi
+
+  # Check if the systemd timer exists
+  if [ -e "$ZT_TIMER" ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "systemd timer exists at $ZT_TIMER"
+    fi
+  else
+  # Install systemd timer
+  cat <<EOF >> "$ZT_TIMER"
+[Unit]
+Description=Weekly attempt to upgrade zerotier-one
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  fi
+
+  # Check if systemd has a symlink to the timer
+  if [ -e $SYSD_TIMER ] && [ -h $SYSD_TIMER ]; then
+    if [ $DEBUG -eq 1 ]; then
+      echo "systemd timer symlink exists at $SYSD_TIMER"
+    fi
+  else
+    ln -s $ZT_TIMER $SYSD_TIMER
+    systemctl daemon-reload
+    wait $!
+    systemctl enable zt_upgrade.timer
+    wait $!
+    systemctl start zt_upgrade.timer
+  fi
+
 fi
 
-# Check if the ZT package is installed, if not then install it
-if [ $(dpkg-query -W -f='${Status}' zerotier-one 2>/dev/null | grep -c "ok installed") -eq 0 ]; then
-  if [ $DEBUG -eq 1 ]; then
-    echo "zerotier-one is not installed"
-  fi
-  rm -rf $ZT_DIR
-  apt install zerotier-one
-  wait $!
-  if [ $DEBUG -eq 1 ]; then
-    echo "ZeroTier package has been installed, ensuring persistence..."
-  fi
-  systemctl stop zerotier-one
-  rm -rf $ZT_DIR
-  ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
-  systemctl start zerotier-one
-  if [ $DEBUG -eq 1 ]; then
-    echo "ZeroTier has been installed and is persistent"
-  fi
-else
-  if [ $DEBUG -eq 1 ]; then
-    echo "zerotier-one is already installed"
+if [ $# -eq 1 ]; then
+  # Execute if command line argument equals "upgrade"
+  if [ $1 = "upgrade" ]; then
+    apt update
+    wait $!
+    rm -rf $ZT_DIR
+    apt -y install zerotier-one
+    wait $!
+    systemctl stop zerotier-one
+    rm -rf $ZT_DIR
+    ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
+    systemctl start zerotier-one
   fi
 fi
 
