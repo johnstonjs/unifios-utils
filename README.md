@@ -69,6 +69,10 @@ These scripts have been tested on the following devices
 - UniFi Dream Machine Pro (UDM-Pro)
 - UniFi Cloud Key Gen2 Plus (UCK-G2-Plus)
 
+Persistence on UDM-Pro was confirmed on 22 Mar 2023 upgrading from 2.4.27 to 2.5.17.
+It took nearly 10 minutes before the unifios-utils *systemd* service executed, likely
+due to the startup times for UDM-Pro web services.
+
 ## Warning / Feedback
 
 These scripts are provided without any warranty.  Use at your own risk.
