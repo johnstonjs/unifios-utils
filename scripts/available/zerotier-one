@@ -138,6 +138,13 @@ EOF
     systemctl start zt_upgrade.timer
   fi
 
+  # Update systemctl regardless to ensure the timer is loaded
+  systemctl daemon-reload
+  wait $!
+  systemctl enable zt_upgrade.timer
+  wait $!
+  systemctl start zt_upgrade.timer
+
 fi
 
 if [ $# -eq 1 ]; then
