@@ -13,6 +13,9 @@ ZT_SERVICE="$ZT_DIR/zt_upgrade.service"
 ZT_TIMER="$ZT_DIR/zt_upgrade.timer"
 SYSD_SERVICE='/etc/systemd/system/zt_upgrade.service'
 SYSD_TIMER='/etc/systemd/system/zt_upgrade.timer'
+APT_FILE='/etc/apt/sources.list.d/zerotier.list'
+
+DEBIAN_RELEASE=$(awk -F'[" ]' '/VERSION=/{print $3}'  /etc/os-release | tr -cd '[[:alnum:]]._-' )
 
 # Command line arguments:
 #   None ($# == 0): Execute the installation routine
@@ -20,6 +23,12 @@ SYSD_TIMER='/etc/systemd/system/zt_upgrade.timer'
 
 # Check if there are any command line arguments
 if [ $# -eq 0 ]; then
+  # Overwrite contents of apt file, ensuring it's always there
+  echo "deb [signed-by=/etc/apt/trusted.gpg.d/zerotier.com.gpg] http://download.zerotier.com/debian/$DEBIAN_RELEASE $DEBIAN_RELEASE main" > $APT_FILE
+  # Download the zerotier signature key
+  curl -s http://download.zerotier.com/contact%40zerotier.com.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/zerotier.com.gpg > /dev/null
+  apt update
+  wait $!
   # Check is ZeroTier has previously been installed
   if [ -d $DATA_DIR/zerotier-one ]; then
     if [ $DEBUG -eq 1 ]; then
@@ -30,10 +39,12 @@ if [ $# -eq 0 ]; then
       echo "$DATA_DIR/zerotier-one does not exist, so this is initial install"
       echo "Installing ZeroTier from https://install.zerotier.com"
     fi
-    curl -s https://install.zerotier.com | sudo bash
-    while [ ! -f /var/lib/zerotier-one/identity.secret ]; do
-        sleep 1
-    done
+#    curl -s https://install.zerotier.com | sudo bash
+    apt install zerotier-one
+    wait $!
+#    while [ ! -f /var/lib/zerotier-one/identity.secret ]; do
+#        sleep 1
+#    done
     systemctl stop zerotier-one
     mv $ZT_DIR "$DATA_DIR/"
     ln -s "$DATA_DIR/zerotier-one" $ZT_DIR
@@ -54,6 +65,13 @@ if [ $# -eq 0 ]; then
     rm -rf $ZT_DIR
     apt install zerotier-one
     wait $!
+    # Simply re-installing from apt will not work in all cases.  Some UnifiOS updates
+    # have cleared out /etc and the necessary apt files.  Re-running the ZT install
+    # script instead
+#    curl -s https://install.zerotier.com | sudo bash
+#    while [ ! -f /var/lib/zerotier-one/identity.secret ]; do
+#        sleep 1
+#    done
     if [ $DEBUG -eq 1 ]; then
       echo "ZeroTier package has been installed, ensuring persistence..."
     fi
@@ -138,12 +156,12 @@ EOF
     systemctl start zt_upgrade.timer
   fi
 
-  # Update systemctl regardless to ensure the timer is loaded
-  systemctl daemon-reload
-  wait $!
-  systemctl enable zt_upgrade.timer
-  wait $!
-  systemctl start zt_upgrade.timer
+# Update systemctl regardless to ensure the timer is loaded
+systemctl daemon-reload
+wait $!
+systemctl enable zt_upgrade.timer
+wait $!
+systemctl start zt_upgrade.timer
 
 fi
 
