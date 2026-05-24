@@ -74,7 +74,7 @@ Persistence on UDM-Pro was confirmed on 22 Mar 2023 upgrading from 2.4.27 to 2.5
 It took nearly 10 minutes before the unifios-utils *systemd* service executed, likely
 due to the startup times for UDM-Pro web services.
 
-Persistence was tested upgrading to 5.1.12 in May 2026.  Scripts usign the `apt`
+Persistence was tested upgrading to 5.1.12 in May 2026.  Scripts using the `apt`
 command have been updated to wait for `dpkg` lock to clear to avoid the script
 crashing when `apt` is executed by another script (such as the upgrade process).
 
