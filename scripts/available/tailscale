@@ -1,0 +1,130 @@
+#!/bin/sh
+
+# Ensure persistent installation of Tailscale for UniFi OS >2.0 devices
+
+# User Modifiable Variables
+DEBUG=1
+UTIL_DIR='/data/unifios-utils'
+DATA_DIR="$UTIL_DIR/.config"         	# Set persistent folder location
+
+# Non-User Modifiable Variables
+TS_DIR=/var/lib/tailscale	        # Location for Tailscale config
+TS_SERVICE="$TS_DIR/tailscale_upgrade.service"
+TS_TIMER="$TS_DIR/tailscale_upgrade.timer"
+SYSD_SERVICE='/etc/systemd/system/tailscale_upgrade.service'
+SYSD_TIMER='/etc/systemd/system/tailscale_upgrade.timer'
+
+DEBIAN_RELEASE=$(awk -F'[" ]' '/VERSION=/{print $3}'  /etc/os-release | tr -cd '[[:alnum:]]._-' )
+
+# Function to safely block until the apt/dpkg lock is released
+wait_for_apt() {
+  if [ $DEBUG -eq 1 ]; then
+    echo "Checking for background apt/dpkg locks..."
+  fi
+  # Loop while fuser detects processes holding the dpkg frontend lock or apt lists lock
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if [ $DEBUG -eq 1 ]; then
+      echo "Apt or Dpkg lock is active. Waiting 5 seconds..."
+    fi
+    sleep 5
+  done
+  if [ $DEBUG -eq 1 ]; then
+    echo "Locks are clear. Proceeding with apt execution."
+  fi
+}
+
+# Main Installation Routine
+if [ $# -eq 0 ]; then
+
+  # Wait until any conflicting boot time apt tasks finish
+  wait_for_apt
+
+  # Install Tailscale via official script
+  curl -fsSL https://tailscale.com/install.sh | sh
+
+  # Stop tailscaled daemon to reconfigure storage
+  systemctl stop tailscaled
+
+  # Ensure persistent folder exists
+  mkdir -p "$DATA_DIR/tailscale"
+
+  # Clean up existing symlink if it exists from older historical setups
+  if [ -L "$TS_DIR" ]; then
+    rm "$TS_DIR"
+  fi
+
+  # Ensure the system path exists as a real directory
+  mkdir -p "$TS_DIR"
+
+  # Bind mount the persistent data to the system path
+  if ! mountpoint -q "$TS_DIR"; then
+    mount --bind "$DATA_DIR/tailscale" "$TS_DIR"
+  fi
+
+  systemctl start tailscaled
+
+  # Create the upgrade systemd service
+  if [ ! -e "$TS_SERVICE" ]; then
+    cat << 'EOF' > "$TS_SERVICE"
+[Unit]
+Description=Upgrade tailscale Package via APT
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/apt update && /usr/bin/apt install -y tailscale
+SuccessExitStatus=0 2
+EOF
+  fi
+
+  # Symlink the service to systemd
+  if [ ! -L "$SYSD_SERVICE" ]; then
+    ln -s "$TS_SERVICE" "$SYSD_SERVICE"
+    systemctl daemon-reload
+  fi
+
+  # Create the weekly upgrade timer
+  if [ ! -e "$TS_TIMER" ]; then
+    cat << 'EOF' > "$TS_TIMER"
+[Unit]
+Description=Weekly attempt to upgrade tailscale
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  fi
+
+  # Symlink and activate the timer
+  if [ ! -L "$SYSD_TIMER" ]; then
+    ln -s "$TS_TIMER" "$SYSD_TIMER"
+  fi
+
+  systemctl daemon-reload
+  systemctl enable tailscale_upgrade.timer
+  systemctl start tailscale_upgrade.timer
+
+fi
+
+# Manual or Automated Upgrade Routine
+if [ $# -eq 1 ] && [ "$1" = "upgrade" ]; then
+  # Block if automated weekly execution clashes with a manual task
+  wait_for_apt
+
+  apt update
+  apt install -y tailscale
+  systemctl stop tailscaled
+
+  # Ensure the bind mount is still active before restarting
+  if ! mountpoint -q "$TS_DIR"; then
+    mkdir -p "$TS_DIR"
+    mount --bind "$DATA_DIR/tailscale" "$TS_DIR"
+  fi
+  systemctl start tailscaled
+fi
+
+exit 0

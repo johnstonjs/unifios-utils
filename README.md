@@ -1,7 +1,7 @@
 # UniFi OS Utilities
 
 This collection of scripts enables running various utilities on the full range of
-UniFi products that support UniFi OS 2.0 & 3.0.
+UniFi products that support UniFi OS 2.0, 3.0 and beyond.  It has been most recently tested on [UniFi OS 5.1.12](https://community.ui.com/releases/UniFi-OS-Dream-Machines-5-1-12/6a229a80-ed47-4509-a9a3-046122ecc1b9).
 
 With the release of [UniFi OS 2.0 & 3.0](https://community.ui.com/releases),
 [prior collections](https://github.com/unifi-utilities/unifios-utilities) of tools built using
@@ -57,7 +57,8 @@ and firmware updates, and it will execute each script symlinked into `enabled`.
 ## Supported Utilities
 
 The supported utilities are
-- ZeroTier
+- Tailscale
+- ZeroTier (no longer actively tested)
 - LetsEncrypt Certificates
 - APT Package Installation
 - Static IP Addresses for Ubiquiti Devices
@@ -72,6 +73,10 @@ These scripts have been tested on the following devices
 Persistence on UDM-Pro was confirmed on 22 Mar 2023 upgrading from 2.4.27 to 2.5.17.
 It took nearly 10 minutes before the unifios-utils *systemd* service executed, likely
 due to the startup times for UDM-Pro web services.
+
+Persistence was tested upgrading to 5.1.12 in May 2026.  Scripts usign the `apt`
+command have been updated to wait for `dpkg` lock to clear to avoid the script
+crashing when `apt` is executed by another script (such as the upgrade process).
 
 ## Warning / Feedback
 

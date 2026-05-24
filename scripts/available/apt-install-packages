@@ -9,4 +9,31 @@ DATA_DIR="$UTIL_DIR/config"	          # Set persistent folder location
 
 APT_INSTALLS="$DATA_DIR/apt-install-packages/apt-install-packages.conf"
 
-cat $APT_INSTALLS | sudo xargs apt -y install
+# Function to safely block until the apt/dpkg lock is released
+wait_for_apt() {
+  if [ $DEBUG -eq 1 ]; then
+    echo "Checking for background apt/dpkg locks..."
+  fi
+  # Loop while fuser detects processes holding the dpkg frontend lock or apt lists lock
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if [ $DEBUG -eq 1 ]; then
+      echo "Apt or Dpkg lock is active. Waiting 5 seconds..."
+    fi
+    sleep 5
+  done
+  if [ $DEBUG -eq 1 ]; then
+    echo "Locks are clear. Proceeding with apt execution."
+  fi
+}
+
+# Block execution until boot-time apt tasks finish
+wait_for_apt
+
+# Execute installation safely
+if [ -f "$APT_INSTALLS" ]; then
+  cat "$APT_INSTALLS" | sudo xargs apt -y install
+else
+  if [ $DEBUG -eq 1 ]; then
+    echo "Error: Configuration file not found at $APT_INSTALLS"
+  fi
+fi
